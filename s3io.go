@@ -11,6 +11,7 @@ import (
 )
 
 var _ io.ReadSeeker = (*S3File)(nil)
+var _ io.ReaderAt = (*S3File)(nil)
 
 type S3File struct {
 	ctx     context.Context
@@ -103,6 +104,16 @@ func (f *S3File) Seek(offset int64, whence int) (newOffset int64, err error) {
 	}
 	f.offset = newOffset
 	return f.offset, nil
+}
+
+// ReadAt implements io.ReaderAt
+func (f *S3File) ReadAt(p []byte, off int64) (n int, err error) {
+	cpy := *f
+	if _, err = cpy.Seek(off, 0); err != nil {
+		return 0, err
+	}
+	cpy.offset = off
+	return io.ReadFull(&cpy, p)
 }
 
 func (f *S3File) Copy(dst io.Writer) (int64, error) {
