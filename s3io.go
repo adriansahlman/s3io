@@ -10,19 +10,23 @@ import (
 	"net/http"
 
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
+
+const uploadPartSize = 8 * 1024 * 1024
 
 var (
 	ErrNotExist = fs.ErrNotExist // "file does not exist"
 )
 
 var (
-	_ io.ReadSeekCloser = (*S3File)(nil)
-	_ io.ReaderAt       = (*S3File)(nil)
+	_ io.ReadSeekCloser = (*S3FileReader)(nil)
+	_ io.ReaderAt       = (*S3FileReader)(nil)
+	_ io.WriteCloser    = (*S3FileWriter)(nil)
 )
 
-type S3File struct {
+type S3FileReader struct {
 	ctx     context.Context
 	client  *s3.Client
 	options *s3.GetObjectInput
@@ -30,7 +34,10 @@ type S3File struct {
 	offset  int64
 }
 
-func OpenFile(client *s3.Client, options *s3.GetObjectInput) (*S3File, error) {
+func OpenFile(
+	client *s3.Client,
+	options *s3.GetObjectInput,
+) (*S3FileReader, error) {
 	return OpenFileWithContext(context.Background(), client, options)
 }
 
@@ -38,7 +45,7 @@ func OpenFileWithContext(
 	ctx context.Context,
 	client *s3.Client,
 	options *s3.GetObjectInput,
-) (*S3File, error) {
+) (*S3FileReader, error) {
 	output, err := client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket:               options.Bucket,
 		Key:                  options.Key,
@@ -61,7 +68,7 @@ func OpenFileWithContext(
 		}
 		return nil, err
 	}
-	return &S3File{
+	return &S3FileReader{
 		ctx:     ctx,
 		client:  client,
 		options: options,
@@ -72,12 +79,12 @@ func OpenFileWithContext(
 
 // Close implements io.Closer
 // This is a no-op.
-func (*S3File) Close() error {
+func (*S3FileReader) Close() error {
 	return nil
 }
 
 // Read implements io.Reader
-func (f *S3File) Read(p []byte) (n int, err error) {
+func (f *S3FileReader) Read(p []byte) (n int, err error) {
 	if f.offset >= f.size {
 		err = io.EOF
 		return
@@ -114,7 +121,10 @@ func (f *S3File) Read(p []byte) (n int, err error) {
 }
 
 // Seek implements io.ReadSeeker
-func (f *S3File) Seek(offset int64, whence int) (newOffset int64, err error) {
+func (f *S3FileReader) Seek(
+	offset int64,
+	whence int,
+) (newOffset int64, err error) {
 	switch whence {
 	case io.SeekStart:
 		newOffset = offset
@@ -133,13 +143,61 @@ func (f *S3File) Seek(offset int64, whence int) (newOffset int64, err error) {
 }
 
 // ReadAt implements io.ReaderAt
-func (f *S3File) ReadAt(p []byte, off int64) (n int, err error) {
+func (f *S3FileReader) ReadAt(p []byte, off int64) (n int, err error) {
 	cpy := *f
 	if _, err = cpy.Seek(off, 0); err != nil {
 		return 0, err
 	}
 	cpy.offset = off
 	return io.ReadFull(&cpy, p)
+}
+
+type S3FileWriter struct {
+	pipeR *io.PipeReader
+	pipeW *io.PipeWriter
+}
+
+func CreateFileWith(
+	client *s3.Client,
+	options *s3.PutObjectInput,
+) (*S3FileWriter, error) {
+	return CreateFileWithContext(
+		context.Background(),
+		client,
+		options,
+	)
+}
+
+func CreateFileWithContext(
+	ctx context.Context,
+	client *s3.Client,
+	options *s3.PutObjectInput,
+) (f *S3FileWriter, err error) {
+	f = new(S3FileWriter)
+	f.pipeR, f.pipeW = io.Pipe()
+	options.Body = f.pipeR
+	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
+		u.PartSize = uploadPartSize
+	})
+	go func() {
+		_, err = uploader.Upload(ctx, options)
+		f.pipeR.CloseWithError(err)
+	}()
+	return
+}
+
+// Write implements io.WriteCloser
+func (f *S3FileWriter) Write(p []byte) (n int, err error) {
+	return f.pipeW.Write(p)
+}
+
+// Close implements io.WriteCloser
+func (f *S3FileWriter) Close() error {
+	return f.pipeW.Close()
+}
+
+func (f *S3FileWriter) CloseWithError(err error) error {
+	return f.pipeW.CloseWithError(err)
 }
 
 func isNotExist(err error) bool {
