@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
-var _ io.ReadSeeker = (*S3File)(nil)
+var _ io.ReadSeekCloser = (*S3File)(nil)
 var _ io.ReaderAt = (*S3File)(nil)
 
 type S3File struct {
@@ -58,7 +58,13 @@ func NewS3FileWithContext(
 	}, nil
 }
 
-// Read implements io.ReadSeeker
+// Close implements io.Closer
+// This is a no-op.
+func (*S3File) Close() error {
+	return nil
+}
+
+// Read implements io.Reader
 func (f *S3File) Read(p []byte) (n int, err error) {
 	if f.offset >= f.size {
 		err = io.EOF
