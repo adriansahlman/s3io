@@ -206,13 +206,13 @@ func (f *S3FileWriter) Write(p []byte) (n int, err error) {
 
 // Close implements io.WriteCloser
 func (f *S3FileWriter) Close() error {
+	closeErr := f.pipeW.Close()
 	var err error
 	select {
 	case err = <-f.err:
 	case <-f.ctx.Done():
 		err = context.Cause(f.ctx)
 	}
-	closeErr := f.pipeW.Close()
 	if err == nil {
 		err = closeErr
 	}
