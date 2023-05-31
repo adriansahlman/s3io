@@ -155,6 +155,8 @@ func (f *S3FileReader) ReadAt(p []byte, off int64) (n int, err error) {
 type S3FileWriter struct {
 	pipeR *io.PipeReader
 	pipeW *io.PipeWriter
+	err   <-chan error
+	ctx   context.Context
 }
 
 func CreateFileWith(
@@ -175,13 +177,24 @@ func CreateFileWithContext(
 ) (f *S3FileWriter, err error) {
 	f = new(S3FileWriter)
 	f.pipeR, f.pipeW = io.Pipe()
-	options.Body = f.pipeR
+	optsCpy := *options
+	optsCpy.Body = f.pipeR
 	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
 		u.PartSize = uploadPartSize
 	})
+	errc := make(chan error)
+	f.err = errc
+	f.ctx = ctx
 	go func() {
-		_, err = uploader.Upload(ctx, options)
-		f.pipeR.CloseWithError(err)
+		_, err := uploader.Upload(ctx, &optsCpy)
+		closeErr := f.pipeR.CloseWithError(err)
+		if err == nil {
+			err = closeErr
+		}
+		select {
+		case errc <- err:
+		case <-ctx.Done():
+		}
 	}()
 	return
 }
@@ -193,7 +206,17 @@ func (f *S3FileWriter) Write(p []byte) (n int, err error) {
 
 // Close implements io.WriteCloser
 func (f *S3FileWriter) Close() error {
-	return f.pipeW.Close()
+	var err error
+	select {
+	case err = <-f.err:
+	case <-f.ctx.Done():
+		err = context.Cause(f.ctx)
+	}
+	closeErr := f.pipeW.Close()
+	if err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 func (f *S3FileWriter) CloseWithError(err error) error {
