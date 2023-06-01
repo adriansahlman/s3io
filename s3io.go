@@ -458,7 +458,7 @@ func (f *s3Reader) Read(p []byte) (n int, err error) {
 	}
 	if f.bufOffset >= 0 && f.offset >= f.bufOffset &&
 		f.offset < f.bufOffset+int64(len(f.buf)) {
-		n = copy(p, f.buf[f.bufOffset-f.offset:])
+		n = copy(p, f.buf[f.offset-f.bufOffset:])
 		f.offset += int64(n)
 		if n == len(p) {
 			return
