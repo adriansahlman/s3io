@@ -493,17 +493,24 @@ func (f *s3Reader) ReadAt(p []byte, offset int64) (n int, err error) {
 	httpRange := fmt.Sprintf("bytes=%d-%d", offset, offset+length)
 	options := f.input
 	options.Range = &httpRange
+	var client manager.DownloadAPIClient
 	if f.downloader != nil {
-		var nn int64
-		nn, err = f.downloader.Download(f.ctx, writerAtBuffer(p), &options)
-		if isNotExist(err) {
-			err = fs.ErrNotExist
+		client = f.downloader.S3
+		if len(p) > int(f.downloader.PartSize) {
+			var nn int64
+			nn, err = f.downloader.Download(f.ctx, writerAtBuffer(p), &options)
+			if isNotExist(err) {
+				err = fs.ErrNotExist
+			}
+			n = int(nn)
+			return
 		}
-		n = int(nn)
-		return
+	}
+	if f.client != nil {
+		client = f.client
 	}
 	var output *s3.GetObjectOutput
-	if output, err = f.client.GetObject(f.ctx, &options); err != nil {
+	if output, err = client.GetObject(f.ctx, &options); err != nil {
 		if isNotExist(err) {
 			err = fs.ErrNotExist
 		}
