@@ -2,4 +2,4 @@
 
 Implements io interfaces for AWS S3 objects in Go.
 
-This is a work in progress, use at your own risk.
+Work in progress, please dont use as I might squash git commits when done.

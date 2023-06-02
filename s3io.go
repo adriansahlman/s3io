@@ -493,24 +493,17 @@ func (f *s3Reader) ReadAt(p []byte, offset int64) (n int, err error) {
 	httpRange := fmt.Sprintf("bytes=%d-%d", offset, offset+length)
 	options := f.input
 	options.Range = &httpRange
-	var client manager.DownloadAPIClient
 	if f.downloader != nil {
-		client = f.downloader.S3
-		if len(p) > int(f.downloader.PartSize) {
-			var nn int64
-			nn, err = f.downloader.Download(f.ctx, writerAtBuffer(p), &options)
-			if isNotExist(err) {
-				err = fs.ErrNotExist
-			}
-			n = int(nn)
-			return
+		var nn int64
+		nn, err = f.downloader.Download(f.ctx, writerAtBuffer(p), &options)
+		if isNotExist(err) {
+			err = fs.ErrNotExist
 		}
-	}
-	if f.client != nil {
-		client = f.client
+		n = int(nn)
+		return
 	}
 	var output *s3.GetObjectOutput
-	if output, err = client.GetObject(f.ctx, &options); err != nil {
+	if output, err = f.client.GetObject(f.ctx, &options); err != nil {
 		if isNotExist(err) {
 			err = fs.ErrNotExist
 		}
@@ -673,7 +666,12 @@ type writerAtBuffer []byte
 
 // WriteAt implements io.WriterAt.
 func (b writerAtBuffer) WriteAt(p []byte, off int64) (n int, err error) {
-	n = copy(b[off:], p)
+	copy(b[off:], p)
+	// a part downloaded by a manager may extend
+	// beyond the buffer for the data we originally
+	// requested. to avoid failure we simply tell
+	// the manager that we wrote all the data.
+	n = len(p)
 	return
 }
 
