@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -495,7 +496,11 @@ func (f *s3Reader) ReadAt(p []byte, offset int64) (n int, err error) {
 	options.Range = &httpRange
 	if f.downloader != nil {
 		var nn int64
-		nn, err = f.downloader.Download(f.ctx, writerAtBuffer(p), &options)
+		nn, err = f.downloader.Download(
+			f.ctx,
+			&writerAtBuffer{buf: p},
+			&options,
+		)
 		if isNotExist(err) {
 			err = fs.ErrNotExist
 		}
@@ -662,11 +667,16 @@ func isNotExist(err error) bool {
 
 var _ io.WriterAt = new(writerAtBuffer)
 
-type writerAtBuffer []byte
+type writerAtBuffer struct {
+	buf []byte
+	mu  sync.Mutex
+}
 
 // WriteAt implements io.WriterAt.
-func (b writerAtBuffer) WriteAt(p []byte, off int64) (n int, err error) {
-	n = copy(b[off:], p)
+func (b *writerAtBuffer) WriteAt(p []byte, off int64) (n int, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n = copy(b.buf[off:], p)
 	return
 }
 
